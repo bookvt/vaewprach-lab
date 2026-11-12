@@ -1,0 +1,37 @@
+# ---- Secrets: never commit (repo is public) ----
+.env
+.env.*
+*.pem
+*.key
+*.agekey
+keys.txt
+*.kubeconfig
+kubeconfig
+.kube/
+
+# ---- OpenTofu / Terraform ----
+# State and plans can contain secrets in plaintext
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+.terraform/
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+# NOTE: .terraform.lock.hcl MUST be committed (provider checksums)
+
+# ---- .NET ----
+bin/
+obj/
+TestResults/
+
+# ---- Editors / OS ----
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ---- Local agent scratch ----
+.superpowers/

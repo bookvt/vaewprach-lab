@@ -1,0 +1,18 @@
+# Fake: encrypted file with one plaintext nested value.
+password: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+region_unencrypted: ap-singapore-1
+db:
+    user: admin
+    hosts:
+        - ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+sops:
+    age:
+        - recipient: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            AAAA
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-11-12T00:00:00Z"
+    mac: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.9.0

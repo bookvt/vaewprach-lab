@@ -1,0 +1,4 @@
+# Fake SOPS config (creation rules) — not a secret file, must not be checked.
+creation_rules:
+  - path_regex: .*\.sops\.yaml$
+    age: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
