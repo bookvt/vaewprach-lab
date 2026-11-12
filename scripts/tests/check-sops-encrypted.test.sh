@@ -30,6 +30,10 @@ tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
 printf 'password: hunter2\nsops:\n    mac: ""\n' > "$tmp"
 run_case sops-block-without-mac  1 "NOT ENCRYPTED: $tmp"                -- "$tmp"
 
+run_case sops-config-is-skipped     0 "skip (sops config): $FX/config/.sops.yaml" -- "$FX/config/.sops.yaml"
+run_case plaintext-value-added-fails 1 "NOT ENCRYPTED: $FX/partially-plaintext.yaml" -- "$FX/partially-plaintext.yaml"
+run_case nested-plaintext-fails      1 "NOT ENCRYPTED: $FX/nested-plaintext.yaml"    -- "$FX/nested-plaintext.yaml"
+
 run_case missing-file-fails      1 "NOT ENCRYPTED: does/not/exist.yaml" -- does/not/exist.yaml
 
 exit $fail

@@ -107,7 +107,9 @@ oci iam customer-secret-key create --user-id "$USER_ID" --display-name tofu-stat
 
 ## 5. ทดสอบ least privilege (Cloud Shell)
 
-สร้าง profile ชั่วคราวใน `~/.oci/config`:
+> **สำคัญ:** Cloud Shell ตั้ง `OCI_CLI_AUTH=instance_obo_user` และ `OCI_CLI_CONFIG_FILE=/etc/oci/config` ไว้ — ถ้าไม่ override คำสั่งจะรันด้วยสิทธิ์ **admin ของคุณ** ไม่ใช่ CI user ทำให้ผลทดสอบผิด และแถว `bucket delete` จะลบ bucket จริงได้
+
+สร้างไฟล์ config แยก `~/ci-test.config` (ไม่ใช่ `~/.oci/config`):
 
 ```ini
 [ci-plan]
@@ -125,13 +127,21 @@ tenancy=<tenancy OCID>
 region=ap-singapore-1
 ```
 
+```bash
+chmod 600 ~/ci-test.config
+ci() { local p=$1; shift; OCI_CLI_AUTH=api_key oci --auth api_key --config-file ~/ci-test.config --profile "$p" "$@"; }
+
+# ยืนยันว่ารันเป็น CI user จริงก่อน — ต้องเห็น OCID ของ ci-plan ไม่ใช่ของ admin
+ci ci-plan iam user get --user-id <ci-plan user OCID> --query 'data.name' --raw-output   # ci-plan
+```
+
 | คำสั่ง | ต้องได้ |
 |---|---|
-| `oci --profile ci-plan os object list -bn tofu-state` | สำเร็จ (ว่าง) |
-| `oci --profile ci-plan os object put -bn tofu-state --file /etc/hostname --name probe` | **fail** `NotAuthorizedOrNotFound` |
-| `oci --profile ci-apply os object put -bn tofu-state --file /etc/hostname --name probe` | สำเร็จ |
-| `oci --profile ci-apply os object delete -bn tofu-state --object-name probe --force` | สำเร็จ (ลบไฟล์ทดสอบ) |
-| `oci --profile ci-apply os bucket delete -bn tofu-state --force` | **fail** `NotAuthorizedOrNotFound` |
+| `ci ci-plan os object list -bn tofu-state` | สำเร็จ (ว่าง) |
+| `ci ci-plan os object put -bn tofu-state --file /etc/hostname --name probe` | **fail** `NotAuthorizedOrNotFound` |
+| `ci ci-apply os object put -bn tofu-state --file /etc/hostname --name probe` | สำเร็จ |
+| `ci ci-apply os object delete -bn tofu-state --object-name probe --force` | สำเร็จ (ลบไฟล์ทดสอบ) |
+| `ci ci-apply os bucket delete -bn tofu-state --force` | **fail** `NotAuthorizedOrNotFound` |
 
 ถ้าบรรทัดที่ต้อง fail กลับสำเร็จ → policy กว้างเกิน **หยุดและแก้ policy ก่อน**
 
@@ -160,7 +170,7 @@ region=ap-singapore-1
 
 ```bash
 shred -u ~/ci-plan.pem ~/ci-apply.pem ~/ci-plan.pub.pem ~/ci-apply.pub.pem
-# ลบ section [ci-plan] / [ci-apply] ออกจาก ~/.oci/config
+shred -u ~/ci-test.config
 ```
 
 ตรวจ (เครื่องไหนก็ได้ที่มี `gh`):

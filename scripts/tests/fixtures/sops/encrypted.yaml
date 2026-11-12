@@ -1,5 +1,10 @@
 # Fake SOPS-encrypted file for tests. All values are dummies (low entropy on purpose).
 password: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+region_unencrypted: ap-singapore-1
+db:
+    user: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+    hosts:
+        - ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
 sops:
     age:
         - recipient: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
