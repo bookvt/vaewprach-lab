@@ -26,12 +26,16 @@
 4. Billing → Budgets → Create Budget
    - Target: root compartment (tenancy), Amount: **$1**, Reset: Monthly
    - Alert rule: **Actual spend**, threshold **1 %** ของ budget → email ของคุณ
+   - (แนะนำ) Alert rule ที่ 2: **Forecast spend**, threshold **100 %** — เตือนก่อนเกินจริง
+   - หมายเหตุ: สกุลเงินของ budget = สกุลเงินของ account (เช่น SGD) ไม่จำเป็นต้องเป็น USD
 5. Identity & Security → **Cloud Guard** → Enable — Oracle-managed recipes, reporting region `ap-singapore-1`, target = root compartment
 
 ตรวจใน Cloud Shell:
 
 ```bash
-oci budgets budget list --compartment-id "$OCI_TENANCY" --query 'data[].{name:"display-name",amount:amount}' --output table
+oci budgets budget budget list --compartment-id "$OCI_TENANCY" --query 'data[].{name:"display-name",amount:amount,rules:"alert-rule-count"}' --output table
+B=$(oci budgets budget budget list --compartment-id "$OCI_TENANCY" --query 'data[0].id' --raw-output)
+oci budgets budget alert-rule list --budget-id "$B" --query 'data[].{type:type,threshold:threshold}' --output table   # ACTUAL 1.0 (+ FORECAST 100.0)
 oci cloud-guard configuration get --compartment-id "$OCI_TENANCY" --query 'data.status'   # "ENABLED"
 ```
 
@@ -67,7 +71,8 @@ Console → Identity & Security → Domains → `Default`:
 | `ci-plan` | `ci-plan` | ใช้ตอน PR — อ่านอย่างเดียว |
 | `ci-apply` | `ci-apply` | ใช้ตอน merge — ผ่าน Environment `production` ที่ต้อง approve |
 
-- User ทั้งสอง: **ไม่ตั้ง console password**, ไม่ใส่ email ที่ใช้ login จริง, เพิ่มเข้า group ชื่อเดียวกัน
+- User ทั้งสอง: **ไม่ตั้ง console password**, เพิ่มเข้า group ชื่อเดียวกัน
+- Default domain บังคับให้มี email — ใช้ alias ของคุณเอง เช่น `you+ci-plan@gmail.com` / `you+ci-apply@gmail.com` (Gmail ส่งเข้ากล่องเดิม)
 - User capabilities: เปิดเฉพาะ **API keys** และ **Customer secret keys** ปิดอย่างอื่นทั้งหมด
 
 ### Policy `vaewprach-lab-ci` (ที่ root compartment)
@@ -151,7 +156,19 @@ ci ci-plan iam user get --user-id <ci-plan user OCID> --query 'data.name' --raw-
 
 1. สร้าง state passphrase: `openssl rand -base64 32` → **บันทึกลง password manager ก่อน** (หาย = state ถอดรหัสไม่ได้)
 2. หา namespace: `oci os ns get --query data --raw-output`
-3. ใส่ค่าที่ GitHub → Settings → Environments → `plan` / `production` (วางทีละค่าในหน้าเว็บ — ไม่ต้องคัดลอก private key ออกจาก Cloud Shell ลงเครื่อง local)
+3. ใส่ค่าลง GitHub Environments `plan` / `production` — วิธีที่แนะนำคือรัน `gh` **ใน Cloud Shell** เพื่อไม่ให้ private key ผ่าน clipboard ของเครื่อง local:
+
+   ```bash
+   # ติดตั้ง gh ใน Cloud Shell (ครั้งเดียว) แล้ว login แบบ device code
+   V=2.103.3; A=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+   curl -sL https://github.com/cli/cli/releases/download/v$V/gh_${V}_linux_$A.tar.gz | tar xz -C ~ && export PATH=~/gh_${V}_linux_$A/bin:$PATH
+   gh auth login --hostname github.com --git-protocol https --web
+   gh secret set OCI_PRIVATE_KEY --repo bookvt/vaewprach-lab --env plan       < ~/ci-plan.pem
+   gh secret set OCI_PRIVATE_KEY --repo bookvt/vaewprach-lab --env production < ~/ci-apply.pem
+   gh secret set OCI_FINGERPRINT --repo bookvt/vaewprach-lab --env plan       # วางค่าเมื่อถูกถาม (ไม่ขึ้นใน history)
+   ```
+
+   (ทางเลือก: วางทีละค่าในหน้าเว็บ GitHub → Settings → Environments — ค่าจะผ่าน clipboard ของเครื่อง local) หลังเสร็จรัน `gh auth logout` ใน Cloud Shell
 
 | ชื่อ | ชนิด | `plan` | `production` |
 |---|---|---|---|
