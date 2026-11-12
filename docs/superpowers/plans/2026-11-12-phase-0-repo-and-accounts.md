@@ -19,6 +19,9 @@
 - OCI home region: `ap-singapore-1`; compartments: `vaewprach-lab` (infra), `vaewprach-lab-state` (state เท่านั้น); bucket: `tofu-state`
 - ไม่มี OCID, IP, หรือ credential ใดๆ อยู่ใน Git — เก็บใน GitHub Environment secrets เท่านั้น
 - Budget alert: $1/เดือน, แจ้งเมื่อ actual spend > 1%
+- Branch ที่ใช้ทำ Phase 0: `Feat-Implement-Phase-0` (README + roadmap + plan อยู่บน `main` แล้วจาก PR #1)
+- Workflow ที่เป็น required check (`security.yml`) **ห้ามมี `paths` / `paths-ignore`** — ไม่งั้น PR ที่ไม่แตะ path นั้นจะรอ check ที่ไม่มีวันมา
+- `ci-plan` เขียน object ใน `tofu-state` ไม่ได้ (ตั้งใจ) → Phase 1 ต้องรัน `tofu plan -lock=false` ตอน PR; lock ใช้เฉพาะ `apply` ด้วย `ci-apply`
 
 ## Review Focus
 
@@ -27,6 +30,8 @@
 3. **Workflow จาก fork รันโดยไม่ได้รับอนุญาต** — ต้องยืนยัน approval policy ผ่าน API (Task 3 Step 3)
 4. **State passphrase หาย = state กู้คืนไม่ได้** — ต้องเก็บไว้ใน password manager ก่อนใส่ GitHub (Task 4 Step 6)
 5. **`ci-plan` มี `read all-resources` ซึ่งอ่าน secret bundle ได้** — ห้ามสร้าง Vault/secret ใน compartment `vaewprach-lab`; Phase 2 จะสร้าง Vault ใน compartment แยก (Task 4 Step 4 ทดสอบว่า `ci-plan` เขียนไม่ได้)
+6. **gitleaks จับ fixture ของ sops-check เป็น false positive** — ค่าปลอมใน fixture ต้อง entropy ต่ำ (เช่น `data:AAAA`) และไม่ใช้รูปแบบ key จริง; ห้ามแก้ด้วยการ allowlist ทั้ง directory (Task 2 Step 1, Step 8)
+7. **`tofu plan` ของ PR ติด state lock** — `ci-plan` ไม่มีสิทธิ์เขียน `.tflock` (Global Constraints; Task 4 Step 5 ยืนยันว่าเขียนไม่ได้จริง)
 
 ---
 
@@ -78,7 +83,7 @@ git commit -m "chore: add repo hygiene and security policy files"
 - Produces: **ชื่อ job ที่ Task 3 ใช้เป็น required checks: `gitleaks`, `zizmor`, `sops-check`** (ห้ามเปลี่ยนชื่อโดยไม่แก้ Ruleset)
 
 - [ ] **Step 1: สร้าง fixtures**
-  - `encrypted.yaml`: รูปแบบไฟล์ SOPS จริง — `password: ENC[AES256_GCM,data:...,type:str]` + block `sops:` ที่มี `age:` และ `mac: ENC[AES256_GCM,...]` (ค่าปลอม)
+  - `encrypted.yaml`: รูปแบบไฟล์ SOPS จริง — `password: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]` + block `sops:` ที่มี `age:` และ `mac: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]` (ค่าปลอม entropy ต่ำ เพื่อไม่ให้ gitleaks จับ)
   - `plaintext.yaml`: `password: hunter2` ไม่มี block `sops:`
 
 - [ ] **Step 2: เขียน test** `scripts/tests/check-sops-encrypted.test.sh` (bash, `set -euo pipefail`) ที่ assert:
@@ -95,7 +100,7 @@ git commit -m "chore: add repo hygiene and security policy files"
 - [ ] **Step 5: รัน test ให้ผ่าน** — Expected: ทุก case `PASS`, exit 0
 
 - [ ] **Step 6: เขียน `.github/workflows/security.yml`**
-  - triggers: `pull_request`, `push` (branches: `main`), `schedule` (`0 2 * * 1`), `workflow_dispatch`
+  - triggers: `pull_request`, `push` (branches: `main`), `schedule` (`0 2 * * 1`), `workflow_dispatch` — **ไม่มี** `paths` filter
   - `permissions: {}`, `concurrency: security-${{ github.ref }}` + `cancel-in-progress: true`
   - job `gitleaks` (`contents: read`): checkout `fetch-depth: 0` → `docker run` image `ghcr.io/gitleaks/gitleaks` (pin ด้วย digest) คำสั่ง `git /repo --redact --verbose` (สแกนทั้ง history)
   - job `zizmor` (`contents: read`): `pipx run zizmor==<pinned version> --format=github .github/workflows`
@@ -107,13 +112,13 @@ git commit -m "chore: add repo hygiene and security policy files"
 - [ ] **Step 8: Commit README + docs + งานของ Task 1–2 แล้วเปิด PR**
 
 ```bash
-git add scripts .github/workflows README.md docs
+git add scripts .github/workflows docs
 git commit -m "ci: add security workflows (gitleaks, zizmor, sops-check, scorecard)"
-git push -u origin feat/initial-project-and-planing
+git push -u origin Feat-Implement-Phase-0
 gh pr create --base main --title "Phase 0: repo hygiene and security workflows" --body "Phase 0 tasks 1-2: hygiene files + security workflows. See docs/superpowers/plans/2026-11-12-phase-0-repo-and-accounts.md"
 gh pr checks --watch
 ```
-Expected: `gitleaks`, `zizmor`, `sops-check` = pass. ถ้า zizmor เตือน → แก้ workflow (ไม่ใช่ปิด rule)
+Expected: `gitleaks`, `zizmor`, `sops-check` = pass. ถ้า zizmor เตือน → แก้ workflow (ไม่ใช่ปิด rule). ถ้า gitleaks จับ fixture → ลด entropy ของค่าปลอม (ไม่ใช่ allowlist)
 
 - [ ] **Step 9: 👤 Review + merge PR** (squash) เข้า `main`
 
@@ -144,7 +149,7 @@ Expected: `gitleaks`, `zizmor`, `sops-check` = pass. ถ้า zizmor เตื�
   - `PATCH .../code-scanning/default-setup` `state=configured` (CodeQL — ตอนนี้จะสแกน language `actions`)
   - 👤 ติดตั้ง Renovate GitHub App ให้ repo นี้ → merge onboarding PR
 
-- [ ] **Step 6: Ruleset** — `.github/rulesets/main.json`: target branch `~DEFAULT_BRANCH`, enforcement `active`, rules: `deletion`, `non_fast_forward`, `pull_request` (`required_approving_review_count: 0` — ทำคนเดียว แต่บังคับผ่าน PR), `required_status_checks` (`gitleaks`, `zizmor`, `sops-check`, strict = true); ไม่มี bypass actor. Apply: `gh api -X POST repos/bookvt/vaewprach-lab/rulesets --input .github/rulesets/main.json`
+- [ ] **Step 6: Ruleset** — `.github/rulesets/main.json`: target branch `~DEFAULT_BRANCH`, enforcement `active`, rules: `deletion`, `non_fast_forward`, `pull_request` (`required_approving_review_count: 0` — ทำคนเดียว แต่บังคับผ่าน PR), `required_status_checks` (`parameters.required_status_checks: [{"context":"gitleaks"},{"context":"zizmor"},{"context":"sops-check"}]`, `strict_required_status_checks_policy: true`); `bypass_actors: []`. Apply: `gh api -X POST repos/bookvt/vaewprach-lab/rulesets --input .github/rulesets/main.json`
 
 - [ ] **Step 7: ทดสอบ Ruleset จริง**
   - `git push origin HEAD:main` ตรงๆ → Expected: ถูก reject
@@ -155,7 +160,7 @@ Expected: `gitleaks`, `zizmor`, `sops-check` = pass. ถ้า zizmor เตื�
   - `production`: required reviewer `bookvt`, deployment branches = `main` เท่านั้น
   - ตรวจ: `gh api repos/bookvt/vaewprach-lab/environments --jq '.environments[].name'` → `plan`, `production`
 
-- [ ] **Step 9: ตรวจภาพรวม** — `gh api repos/bookvt/vaewprach-lab --jq '{visibility, security_and_analysis}'` → `public`, secret scanning + push protection `enabled`; Scorecard workflow รันผ่านบน `main`
+- [ ] **Step 9: ตรวจภาพรวม** — `gh api repos/bookvt/vaewprach-lab --jq '{visibility, security_and_analysis}'` → `public`, secret scanning + push protection `enabled`; Scorecard workflow รันผ่านบน `main` แล้วจดคะแนนตั้งต้น: `curl -s https://api.securityscorecards.dev/projects/github.com/bookvt/vaewprach-lab | jq .score` → ใส่ใน description ของ PR Step 10
 
 - [ ] **Step 10: Commit ruleset ผ่าน PR** (`chore: add main branch ruleset as code`)
 
@@ -219,6 +224,6 @@ Expected: `gitleaks`, `zizmor`, `sops-check` = pass. ถ้า zizmor เตื�
 ## Checkpoint จบ Phase 0
 
 - repo `bookvt/vaewprach-lab` เป็น public, push ตรงเข้า `main` ไม่ได้, PR ต้องผ่าน `gitleaks` / `zizmor` / `sops-check`
-- secret scanning + push protection + CodeQL + Dependabot alerts + Scorecard ทำงาน
+- secret scanning + push protection + CodeQL + Dependabot alerts + Scorecard ทำงาน และจดคะแนน Scorecard ตั้งต้นไว้แล้ว
 - OCI มี budget alert, Cloud Guard, `ci-plan` (อ่านอย่างเดียว) / `ci-apply` ที่ทดสอบสิทธิ์แล้ว
 - GitHub Environments มี credential ครบ → พร้อมเขียน plan ของ Phase 1
