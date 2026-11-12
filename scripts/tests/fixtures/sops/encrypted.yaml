@@ -1,0 +1,13 @@
+# Fake SOPS-encrypted file for tests. All values are dummies (low entropy on purpose).
+password: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+sops:
+    age:
+        - recipient: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            AAAA
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-11-12T00:00:00Z"
+    mac: ENC[AES256_GCM,data:AAAA,iv:AAAA,tag:AAAA,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.9.0
