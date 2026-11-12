@@ -60,115 +60,145 @@ oci os bucket create --compartment-id "$STATE_C" --name tofu-state \
 
 ---
 
-## 4. CI identities
+## 4. CI identities (Cloud Shell)
 
-### Groups + users (identity domain `Default`)
+| Group / User | ใช้เมื่อ |
+|---|---|
+| `ci-plan` | PR — อ่านอย่างเดียว |
+| `ci-apply` | merge — ผ่าน Environment `production` ที่ต้อง approve |
 
-Console → Identity & Security → Domains → `Default`:
+### Groups + users
 
-| Group | User | หมายเหตุ |
-|---|---|---|
-| `ci-plan` | `ci-plan` | ใช้ตอน PR — อ่านอย่างเดียว |
-| `ci-apply` | `ci-apply` | ใช้ตอน merge — ผ่าน Environment `production` ที่ต้อง approve |
+Default domain บังคับให้ user มี email — ใช้ alias ของคุณเอง (Gmail: `you+ci-plan@gmail.com` เข้ากล่องเดิม) ถ้ามี email เชิญ activate **ไม่ต้องกด**
 
-- User ทั้งสอง: **ไม่ตั้ง console password**, เพิ่มเข้า group ชื่อเดียวกัน
-- Default domain บังคับให้มี email — ใช้ alias ของคุณเอง เช่น `you+ci-plan@gmail.com` / `you+ci-apply@gmail.com` (Gmail ส่งเข้ากล่องเดิม)
-- User capabilities: เปิดเฉพาะ **API keys** และ **Customer secret keys** ปิดอย่างอื่นทั้งหมด
-
-### Policy `vaewprach-lab-ci` (ที่ root compartment)
-
+```bash
+MAIL_USER=yourname; MAIL_DOMAIN=gmail.com   # ← แก้
+T="$OCI_TENANCY"
+for N in ci-plan ci-apply; do
+  G=$(oci iam group create --compartment-id "$T" --name "$N" --description "vaewprach-lab CI ($N)" --query data.id --raw-output)
+  U=$(oci iam user create  --compartment-id "$T" --name "$N" --description "vaewprach-lab CI ($N) - API only" \
+        --email "${MAIL_USER}+${N}@${MAIL_DOMAIN}" --query data.id --raw-output)
+  oci iam user update-user-capabilities --user-id "$U" \
+    --can-use-console-password false --can-use-api-keys true --can-use-customer-secret-keys true \
+    --can-use-auth-tokens false --can-use-smtp-credentials false >/dev/null
+  oci iam group add-user --group-id "$G" --user-id "$U" >/dev/null
+  echo "ok: $N"
+done
 ```
-Allow group 'Default'/'ci-apply' to manage all-resources in compartment vaewprach-lab
-Allow group 'Default'/'ci-plan' to read all-resources in compartment vaewprach-lab
-Allow group 'Default'/'ci-apply' to read buckets in compartment vaewprach-lab-state
-Allow group 'Default'/'ci-plan' to read buckets in compartment vaewprach-lab-state
-Allow group 'Default'/'ci-apply' to manage objects in compartment vaewprach-lab-state where target.bucket.name = 'tofu-state'
-Allow group 'Default'/'ci-plan' to read objects in compartment vaewprach-lab-state where target.bucket.name = 'tofu-state'
+
+### Policy `vaewprach-lab-ci` (ที่ root)
+
+```bash
+cat > ~/ci-policy.json <<'JSON'
+[
+  "Allow group 'Default'/'ci-apply' to manage all-resources in compartment vaewprach-lab",
+  "Allow group 'Default'/'ci-plan' to read all-resources in compartment vaewprach-lab",
+  "Allow group 'Default'/'ci-apply' to read buckets in compartment vaewprach-lab-state",
+  "Allow group 'Default'/'ci-plan' to read buckets in compartment vaewprach-lab-state",
+  "Allow group 'Default'/'ci-apply' to manage objects in compartment vaewprach-lab-state where target.bucket.name = 'tofu-state'",
+  "Allow group 'Default'/'ci-plan' to read objects in compartment vaewprach-lab-state where target.bucket.name = 'tofu-state'"
+]
+JSON
+oci iam policy create --compartment-id "$T" --name vaewprach-lab-ci \
+  --description "vaewprach-lab CI least privilege" --statements file://~/ci-policy.json --query data.name --raw-output
+rm ~/ci-policy.json
 ```
 
 > `ci-plan` ไม่มีสิทธิ์เขียน object → เขียน state lock (`.tflock`) ไม่ได้ ดังนั้น Phase 1 ต้องรัน `tofu plan -lock=false` ตอน PR (ตั้งใจ)
 >
 > `read all-resources` อ่าน secret bundle ได้ → **ห้ามสร้าง Vault/secret ใน compartment `vaewprach-lab`** (Phase 2 ใช้ compartment แยก)
 
-### Keys (ทำใน Cloud Shell, ทีละ user)
+ตรวจ: แต่ละ user ต้อง `console=False, api=True, s3=True` และอยู่ใน group ของตัวเอง; policy มี 6 statements
 
 ```bash
-U=ci-plan   # รันซ้ำด้วย U=ci-apply
-USER_ID=$(oci iam user list --name "$U" --query 'data[0].id' --raw-output)
-
-# API signing key — private key อยู่แค่ใน Cloud Shell จนกว่าจะใส่ GitHub แล้วลบ
-openssl genrsa -out ~/$U.pem 2048 && chmod 600 ~/$U.pem
-openssl rsa -pubout -in ~/$U.pem -out ~/$U.pub.pem
-oci iam user api-key upload --user-id "$USER_ID" --key-file ~/$U.pub.pem --query 'data.fingerprint' --raw-output
-
-# Customer Secret Key (S3-compatible access สำหรับ OpenTofu backend)
-oci iam customer-secret-key create --user-id "$USER_ID" --display-name tofu-state \
-  --query 'data.{id:id,key:key}'          # "key" แสดงครั้งเดียว — คัดลอกทันที
+for N in ci-plan ci-apply; do
+  oci iam user list --name "$N" --query 'data[0].capabilities.{console:"can-use-console-password",api:"can-use-api-keys",s3:"can-use-customer-secret-keys"}' --output table
+  oci iam user list-groups --user-id "$(oci iam user list --name "$N" --query 'data[0].id' --raw-output)" --query 'data[].name' --raw-output
+done
+oci iam policy list --compartment-id "$T" --name vaewprach-lab-ci --query 'length(data[0].statements)'   # 6
 ```
 
-`id` = `STATE_S3_ACCESS_KEY_ID`, `key` = `STATE_S3_SECRET_ACCESS_KEY`
+### Keys → `~/ci-secrets/` (ค่าลับไม่ขึ้นจอ)
+
+**รันครั้งเดียว** — OCI จำกัด API key 3 อัน และ Customer Secret Key 2 อันต่อ user
+
+```bash
+umask 077 && mkdir -p ~/ci-secrets && cd ~/ci-secrets
+for N in ci-plan ci-apply; do
+  U=$(oci iam user list --name "$N" --query 'data[0].id' --raw-output); echo "$U" > $N.user
+  openssl genrsa -out $N.pem 2048 2>/dev/null
+  openssl rsa -pubout -in $N.pem -out $N.pub.pem 2>/dev/null
+  oci iam user api-key upload --user-id "$U" --key-file $N.pub.pem --query data.fingerprint --raw-output > $N.fingerprint
+  oci iam customer-secret-key create --user-id "$U" --display-name tofu-state --query 'data.{id:id,key:key}' > $N.s3.json
+  echo "ok: $N"
+done
+cd ~
+```
+
+> Customer Secret Key ใหม่ใช้เวลา **~10 นาที** กว่าจะใช้กับ S3 API ได้ — ระหว่างนั้นจะได้ 403 "The secret key required to complete authentication could not be found"
 
 ---
 
 ## 5. ทดสอบ least privilege (Cloud Shell)
 
-> **สำคัญ:** Cloud Shell ตั้ง `OCI_CLI_AUTH=instance_obo_user` และ `OCI_CLI_CONFIG_FILE=/etc/oci/config` ไว้ — ถ้าไม่ override คำสั่งจะรันด้วยสิทธิ์ **admin ของคุณ** ไม่ใช่ CI user ทำให้ผลทดสอบผิด และแถว `bucket delete` จะลบ bucket จริงได้
-
-สร้างไฟล์ config แยก `~/ci-test.config` (ไม่ใช่ `~/.oci/config`):
-
-```ini
-[ci-plan]
-user=<ci-plan user OCID>
-fingerprint=<fingerprint>
-key_file=~/ci-plan.pem
-tenancy=<tenancy OCID>
-region=ap-singapore-1
-
-[ci-apply]
-user=<ci-apply user OCID>
-fingerprint=<fingerprint>
-key_file=~/ci-apply.pem
-tenancy=<tenancy OCID>
-region=ap-singapore-1
-```
+> Cloud Shell ตั้ง `OCI_CLI_AUTH=instance_obo_user` ไว้ — คำสั่งปกติรันเป็น **admin** ไม่ใช่ CI user. script ด้านล่างบังคับ `--auth api_key` ทุกคำสั่ง และเลือก check แบบที่ถ้าพลาดไปรันเป็น admin ก็แค่สร้าง probe ที่ไม่มีอันตราย (ไม่มีการลบ)
 
 ```bash
-chmod 600 ~/ci-test.config
-ci() { local p=$1; shift; OCI_CLI_AUTH=api_key oci --auth api_key --config-file ~/ci-test.config --profile "$p" "$@"; }
-
-# ยืนยันว่ารันเป็น CI user จริงก่อน — ต้องเห็น OCID ของ ci-plan ไม่ใช่ของ admin
-ci ci-plan iam user get --user-id <ci-plan user OCID> --query 'data.name' --raw-output   # ci-plan
+mkdir -p ~/lab && for f in least-privilege-test.sh s3-probe.py; do
+  curl -fsSL "https://raw.githubusercontent.com/bookvt/vaewprach-lab/main/scripts/oci/$f" -o ~/lab/$f; done
+bash ~/lab/least-privilege-test.sh
 ```
 
-| คำสั่ง | ต้องได้ |
-|---|---|
-| `ci ci-plan os object list -bn tofu-state` | สำเร็จ (ว่าง) |
-| `ci ci-plan os object put -bn tofu-state --file /etc/hostname --name probe` | **fail** `NotAuthorizedOrNotFound` |
-| `ci ci-apply os object put -bn tofu-state --file /etc/hostname --name probe` | สำเร็จ |
-| `ci ci-apply os object delete -bn tofu-state --object-name probe --force` | สำเร็จ (ลบไฟล์ทดสอบ) |
-| `ci ci-apply os bucket delete -bn tofu-state --force` | **fail** `NotAuthorizedOrNotFound` |
+ต้อง **PASS ทุกบรรทัด** (11 checks รวม S3 list ของทั้งสอง user)
 
-ถ้าบรรทัดที่ต้อง fail กลับสำเร็จ → policy กว้างเกิน **หยุดและแก้ policy ก่อน**
+- `FAIL … CANNOT …` → สิทธิ์กว้างเกิน หรือรันเป็น admin — **หยุด** แก้ policy และลบ probe ที่อาจถูกสร้าง (`probe-plan`, `probe-root`, policy `probe`)
+- `FAIL … S3 list (403 …could not be found)` → key ยังไม่พร้อม รอ ~10 นาทีแล้วรันใหม่
 
 ---
 
 ## 6. ใส่ credential ลง GitHub Environments
 
-1. สร้าง state passphrase: `openssl rand -base64 32` → **บันทึกลง password manager ก่อน** (หาย = state ถอดรหัสไม่ได้)
-2. หา namespace: `oci os ns get --query data --raw-output`
-3. ใส่ค่าลง GitHub Environments `plan` / `production` — วิธีที่แนะนำคือรัน `gh` **ใน Cloud Shell** เพื่อไม่ให้ private key ผ่าน clipboard ของเครื่อง local:
+ต้องมี Environment `plan` / `production` แล้ว (Phase 0 Task 3) — ทำใน Cloud Shell เพื่อให้ private key ไม่ผ่านเครื่อง local
 
-   ```bash
-   # ติดตั้ง gh ใน Cloud Shell (ครั้งเดียว) แล้ว login แบบ device code
-   V=2.103.3; A=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-   curl -sL https://github.com/cli/cli/releases/download/v$V/gh_${V}_linux_$A.tar.gz | tar xz -C ~ && export PATH=~/gh_${V}_linux_$A/bin:$PATH
-   gh auth login --hostname github.com --git-protocol https --web
-   gh secret set OCI_PRIVATE_KEY --repo bookvt/vaewprach-lab --env plan       < ~/ci-plan.pem
-   gh secret set OCI_PRIVATE_KEY --repo bookvt/vaewprach-lab --env production < ~/ci-apply.pem
-   gh secret set OCI_FINGERPRINT --repo bookvt/vaewprach-lab --env plan       # วางค่าเมื่อถูกถาม (ไม่ขึ้นใน history)
-   ```
+**6.1 ติดตั้ง + login `gh`** (Authenticate Git? → No)
 
-   (ทางเลือก: วางทีละค่าในหน้าเว็บ GitHub → Settings → Environments — ค่าจะผ่าน clipboard ของเครื่อง local) หลังเสร็จรัน `gh auth logout` ใน Cloud Shell
+```bash
+V=2.103.3; A=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -sL https://github.com/cli/cli/releases/download/v$V/gh_${V}_linux_$A.tar.gz | tar xz -C ~ \
+  && export PATH=~/gh_${V}_linux_$A/bin:$PATH
+gh auth login --hostname github.com --git-protocol https --web   # ใส่รหัสที่ github.com/login/device
+gh auth status   # bookvt, scopes ต้องมี 'repo'
+```
+
+**6.2 State passphrase** — สร้างใน password manager (≥ 32 ตัวอักษร) และ**บันทึกก่อน** (หาย = state ถอดรหัสไม่ได้)
+
+**6.3 ใส่ค่า**
+
+```bash
+cd ~/ci-secrets
+R=bookvt/vaewprach-lab; T="$OCI_TENANCY"
+LAB_C=$(oci iam compartment list --compartment-id "$T" --name vaewprach-lab --query 'data[0].id' --raw-output)
+NS=$(oci os ns get --query data --raw-output)
+put() { printf '%s' "$3" | gh secret set "$1" --repo $R --env "$2"; }
+s3v() { python3 -c 'import json,sys;sys.stdout.write(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1.s3.json" "$2"; }
+for pair in plan:ci-plan production:ci-apply; do
+  E=${pair%%:*}; N=${pair##*:}
+  gh variable set OCI_REGION --repo $R --env $E --body ap-singapore-1
+  put OCI_TENANCY_OCID           $E "$T"
+  put OCI_COMPARTMENT_OCID       $E "$LAB_C"
+  put STATE_NAMESPACE            $E "$NS"
+  put OCI_USER_OCID              $E "$(cat $N.user)"
+  put OCI_FINGERPRINT            $E "$(cat $N.fingerprint)"
+  gh secret set OCI_PRIVATE_KEY --repo $R --env $E < $N.pem
+  put STATE_S3_ACCESS_KEY_ID     $E "$(s3v $N id)"
+  put STATE_S3_SECRET_ACCESS_KEY $E "$(s3v $N key)"
+  echo "done: $E ($N)"
+done
+cd ~
+# วาง passphrase เดียวกันทั้งสองครั้ง (input ไม่ขึ้นจอ)
+gh secret set TOFU_STATE_PASSPHRASE --repo bookvt/vaewprach-lab --env plan
+gh secret set TOFU_STATE_PASSPHRASE --repo bookvt/vaewprach-lab --env production
+```
 
 | ชื่อ | ชนิด | `plan` | `production` |
 |---|---|---|---|
@@ -177,30 +207,30 @@ ci ci-plan iam user get --user-id <ci-plan user OCID> --query 'data.name' --raw-
 | `OCI_COMPARTMENT_OCID` | secret | OCID ของ `vaewprach-lab` | เหมือนกัน |
 | `OCI_USER_OCID` | secret | ของ `ci-plan` | ของ `ci-apply` |
 | `OCI_FINGERPRINT` | secret | ของ `ci-plan` | ของ `ci-apply` |
-| `OCI_PRIVATE_KEY` | secret | `cat ~/ci-plan.pem` | `cat ~/ci-apply.pem` |
+| `OCI_PRIVATE_KEY` | secret | `ci-plan.pem` | `ci-apply.pem` |
 | `STATE_NAMESPACE` | secret | namespace | namespace |
 | `STATE_S3_ACCESS_KEY_ID` | secret | ของ `ci-plan` | ของ `ci-apply` |
 | `STATE_S3_SECRET_ACCESS_KEY` | secret | ของ `ci-plan` | ของ `ci-apply` |
 | `TOFU_STATE_PASSPHRASE` | secret | passphrase | passphrase เดียวกัน |
 
-4. ล้าง Cloud Shell:
+**6.4 ตรวจ**
 
 ```bash
-shred -u ~/ci-plan.pem ~/ci-apply.pem ~/ci-plan.pub.pem ~/ci-apply.pub.pem
-shred -u ~/ci-test.config
+for e in plan production; do echo "$e: $(gh secret list --repo bookvt/vaewprach-lab --env $e | wc -l) secrets"; done   # 9 / 9
+gh variable list --repo bookvt/vaewprach-lab --env plan   # OCI_REGION
 ```
 
-ตรวจ (เครื่องไหนก็ได้ที่มี `gh`):
+**6.5 ล้าง Cloud Shell** (หลังตรวจผ่านเท่านั้น)
 
 ```bash
-gh secret list   --repo bookvt/vaewprach-lab --env plan        # 9 ชื่อ
-gh secret list   --repo bookvt/vaewprach-lab --env production  # 9 ชื่อ
-gh variable list --repo bookvt/vaewprach-lab --env plan        # OCI_REGION
+find ~/ci-secrets -type f -exec shred -u {} + && rmdir ~/ci-secrets
+rm -rf ~/lab
+gh auth logout --hostname github.com && rm -rf ~/gh_* ~/.config/gh
 ```
 
 ---
 
 ## Rotation
 
-- API key + Customer Secret Key: ทุก 90 วัน หรือทันทีที่สงสัยว่ารั่ว — สร้างใหม่ → อัปเดต GitHub → ลบอันเก่าใน OCI
+- API key + Customer Secret Key: ทุก 90 วัน หรือทันทีที่สงสัยว่ารั่ว — สร้างใหม่ (§4 Keys) → รอ ~10 นาที → `least-privilege-test.sh` → อัปเดต GitHub (§6.3) → ลบอันเก่าใน OCI
 - **ถ้า credential หลุด: rotate ก่อน** แล้วค่อยตามลบจาก log/history
